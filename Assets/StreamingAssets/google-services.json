@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "490498320748",
+    "project_id": "basefirebasedb",
+    "storage_bucket": "basefirebasedb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:490498320748:android:d40e3b5123fa5a5f21eb49",
+        "android_client_info": {
+          "package_name": "com.baekproject.basedb"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOq18-N4tjZelSsFb8ThLCT_v5rH2LN0I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
