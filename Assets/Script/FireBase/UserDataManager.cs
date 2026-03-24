@@ -3,172 +3,187 @@ using Firebase.Database;
 using Firebase.Extensions;
 using System;
 using UnityEngine;
+using System.Collections.Generic;
 
-// [데이터 구조] 유저 정보 클래스
+[Serializable]
 public class UserData
 {
-    public string userId;
     public string nickName;
 
-    public UserData(string id, string name)
+    public UserData(string nickName)
     {
-        userId = id;
-        nickName = name;
+        this.nickName = nickName;
     }
+}
+// wrapper 클래스 추가 (UserData와 device ID를 함께 저장)
+public class UserNode
+{
+    public UserData data;
+    public string deviceId; // 디바이스 ID 추가 (중복 로그인 방지용)
 }
 
 public class UserDataManager
 {
     public UserData userData { get; private set; }
+    public string devieId => SystemInfo.deviceUniqueIdentifier; // 현재 디바이스 ID 반환
 
     private FirebaseAuth auth;
     private DatabaseReference databaseReference;
-    private int nicknameRetryCount = 0; // 무한 재귀 방지용
-
     public void Initialize(FirebaseAuth firebaseAuth, DatabaseReference dbReference)
     {
         auth = firebaseAuth;
         databaseReference = dbReference;
+        LoadUserData();
     }
 
-    // 1. 유저 데이터 로드 시도
-    public void LoadUserData()
+    // 유저 데이터 로드 시도
+    public void LoadUserData(Action<bool> onComplete = null)
     {
-        if (auth == null || databaseReference == null || auth.CurrentUser == null)
-        {
-            Debug.LogError("Firebase not initialized or User not logged in.");
-            return;
-        }
+        if (auth?.CurrentUser == null) return;
 
         string userId = auth.CurrentUser.UserId;
-        databaseReference.Child("users").Child(userId).GetValueAsync().ContinueWithOnMainThread(task =>
-        {
-            if (task.IsFaulted || task.IsCanceled)
-            {
-                Debug.LogError("Failed to load user data: " + task.Exception);
-                return;
-            }
+        var userRef = databaseReference.Child(FirebasePaths.USERS).Child(userId);
 
-            DataSnapshot snapshot = task.Result;
-            if (snapshot.Exists)
+        userRef
+            .GetValueAsync()
+            .ContinueWithOnMainThread(task =>
             {
-                // 데이터가 있으면 로드
-                userData = JsonUtility.FromJson<UserData>(snapshot.GetRawJsonValue());
-                Debug.Log($"User Data Loaded: {userData.nickName}");
-            }
-            else
-            {
-                // 데이터가 없으면 중복 없는 닉네임 생성 시작
-                Debug.LogWarning("No user data found. Generating unique nickname...");
-                nicknameRetryCount = 0;
-                GenerateUniqueNickname(userId);
-            }
-        });
+                if (task.IsFaulted) { onComplete?.Invoke(false); return; }
+
+                DataSnapshot snapshot = task.Result;
+                bool needsNickname = false;
+
+                if (snapshot.Exists && snapshot.HasChild(FirebasePaths.DATA))
+                {
+                    string json = snapshot.Child(FirebasePaths.DATA).GetRawJsonValue();
+                    userData = JsonUtility.FromJson<UserData>(json);
+
+                    if (string.IsNullOrEmpty(userData.nickName)) needsNickname = true;
+                }
+                else
+                {
+                    userData = new UserData("");
+                    needsNickname = true;
+                }
+
+                if (needsNickname) GenerateUniqueNickname(userId, onComplete);
+                else onComplete?.Invoke(true);
+            });
     }
-
-    // 2. 중복되지 않는 랜덤 닉네임 생성 (재귀)
-    private void GenerateUniqueNickname(string userId)
+    private void GenerateUniqueNickname(string userId ,Action<bool> onComplete = null)
     {
-        if (nicknameRetryCount > 10)
-        {
-            Debug.LogError("Failed to generate unique nickname after 10 attempts.");
-            return;
-        }
+        string newNickname = "User_" + UnityEngine.Random.Range(100000, 999999);
 
-        int randomNumber = UnityEngine.Random.Range(1000, 9999);
-        string newNickname = "User" + randomNumber;
-        userData = new UserData(userId, newNickname);
-
-        // SaveUserData를 호출하여 중복 체크 (Transaction 실행)
-        SaveUserData((isSuccess) => {
-            if (!isSuccess)
-            {
-                nicknameRetryCount++;
-                GenerateUniqueNickname(userId); // 중복 시 재시도
-            }
-            else
-            {
-                Debug.Log($"Unique Nickname Registered: {newNickname}");
-            }
-        });
-    }
-
-    // 3. 닉네임 중복 체크 및 데이터 최종 저장
-    public void SaveUserData(Action<bool> onComplete = null)
-    {
-        if (auth == null || databaseReference == null || userData == null)
-        {
-            onComplete?.Invoke(false);
-            return;
-        }
-
-        var nickNameRef = databaseReference.Child("nicknames").Child(userData.nickName);
-
-        // RunTransaction의 결과 Task는 Task<DataSnapshot>이 아니라 내부적으로 TransactionResult를 처리합니다.
+        var nickNameRef = databaseReference.Child(FirebasePaths.NICKNAMES).Child(newNickname);
         nickNameRef.RunTransaction(mutableData =>
         {
-            // 데이터가 이미 존재하면 중복이므로 중단(Abort)
-            if (mutableData.Value != null)
-            {
-                return TransactionResult.Abort();
-            }
-
-            // 존재하지 않으면 내 ID를 할당하여 닉네임 선점
-            mutableData.Value = userData.userId;
+            // 닉네임이 이미 존재하면 중단
+            if (mutableData.Value != null) return TransactionResult.Abort();
+            mutableData.Value = userId; // 닉네임과 유저 ID 매핑 저장
             return TransactionResult.Success(mutableData);
         })
         .ContinueWithOnMainThread(task =>
         {
             if (task.IsFaulted || task.IsCanceled)
             {
-                Debug.LogError("Transaction Error: " + task.Exception);
+                // 닉네임 충돌 시 재생성 시도
+                GenerateUniqueNickname(userId, onComplete); 
+                return;
+            }
+
+            userData.nickName = newNickname;
+            // 1. 저장 실패 시 닉네임 선점 롤백 로직 포함
+            SaveUserData(success =>
+            {
+                if (!success)
+                {
+                    // 저장 실패 시 선점했던 닉네임 다시 삭제 (Rollback)
+                    nickNameRef.SetValueAsync(null);
+                    userData.nickName = "";
+                }
+                onComplete?.Invoke(success);
+            });
+        });
+    }
+
+    private void SaveUserData(Action<bool> onComplete = null)
+    {
+        UserNode node = new UserNode { data = userData, deviceId = devieId };
+
+        string jsonData = JsonUtility.ToJson(node);
+        var userRef = databaseReference.Child(FirebasePaths.USERS).Child(auth.CurrentUser.UserId);
+
+        userRef.SetRawJsonValueAsync(jsonData)
+            .ContinueWithOnMainThread(task =>
+            {
+                bool isSuccess = task.IsCompleted && !task.IsFaulted;
+                onComplete?.Invoke(isSuccess);
+            });
+    }
+
+    public void RegisterNickname(string nickName, Action<bool> onComplete = null)
+    {
+        var nickNameRef = databaseReference.Child(FirebasePaths.NICKNAMES).Child(nickName);
+
+        nickNameRef.RunTransaction(mutableData =>
+        {
+            if (mutableData.Value != null)
+            {
+                return TransactionResult.Abort();
+            }
+            return TransactionResult.Success(mutableData);
+        })
+        .ContinueWithOnMainThread(task => 
+        {
+            if (task.IsFaulted || task.IsCanceled)
+            {
                 onComplete?.Invoke(false);
                 return;
             }
 
-            // TransactionResult를 통해 성공(Committed) 여부 확인
-            // task.Result가 자동으로 TransactionResult로 캐스팅되지 않을 경우 명시적 확인 필요
-            //if (task.Result.Committed)
-            //{
-            //    // 닉네임 등록 성공 -> 유저 상세 정보(JSON) 저장
-            //    SaveUserDetailJson(onComplete);
-            //}
-            //else
-            //{
-            //    // 중복 발생 (Committed == false)
-            //    onComplete?.Invoke(false);
-            //}
+            userData.nickName = nickName;
+            SaveUserData(saveSuccess => {
+                if (!saveSuccess)
+                {
+                    // 롤백: 선점한 닉네임 삭제
+                    nickNameRef.SetValueAsync(null);
+                    userData.nickName = ""; // 이전 닉네임이 있다면 복구하는 로직이 필요할 수 있음
+                }
+                onComplete?.Invoke(saveSuccess);
+            });
         });
     }
-
-    // 4. 실제 유저 상세 데이터(JSON)를 users 노드에 저장
-    private void SaveUserDetailJson(Action<bool> onComplete)
+    public void RecordScore(int score, int seasonNumber, Action<bool> onComplete = null)
     {
-        string jsonData = JsonUtility.ToJson(userData);
-        databaseReference.Child("users").Child(userData.userId).SetRawJsonValueAsync(jsonData)
-            .ContinueWithOnMainThread(task =>
+        var recordRef = databaseReference.Child(FirebasePaths.LEADERBOARD).Child("season_" + seasonNumber).Child(auth.CurrentUser.UserId);
+
+        recordRef.RunTransaction(mutableData =>
+        {
+            int currentScore = 0;
+            // 기존 점수가 존재하면 가져오기 (최고 점수 유지)
+            if (mutableData.Value != null)
             {
-                if (task.IsCompleted && !task.IsFaulted)
-                {
-                    onComplete?.Invoke(true);
-                }
-                else
-                {
-                    Debug.LogError("Failed to save User Detail JSON");
-                    onComplete?.Invoke(false);
-                }
-            });
-    }
+                // 데이터 구조가 바뀌었으므로 사전(Dictionary) 형태로 읽어야 함
+                var dict = mutableData.Value as Dictionary<string, object>;
+                if (dict != null && dict.ContainsKey(FirebasePaths.SCORE))
+                    currentScore = Convert.ToInt32(dict[FirebasePaths.SCORE]);
+            }
+            // 점수가 낮으면 업데이트 중단(Abort)
+            if (score <= currentScore) return TransactionResult.Abort();
 
-    // [기타] 점수 저장 (시즌별)
-    public void SaveScore(int score, int seasonNumber)
-    {
-        if (userData == null) return;
+            // 새로운 점수로 업데이트
+            // 닉네임도 함께 저장하여 리더보드에서 표시 가능
+            var newData = new Dictionary<string, object>();
+            newData[FirebasePaths.SCORE] = score;
+            newData[FirebasePaths.NICKNAME] = userData.nickName;
 
-        databaseReference
-            .Child("leaderboard")
-            .Child("season_" + seasonNumber)
-            .Child(userData.userId)
-            .SetValueAsync(score);
+            mutableData.Value = newData;
+            return TransactionResult.Success(mutableData);
+        })
+        .ContinueWithOnMainThread(task =>
+        {
+            bool isSuccess = task.IsCompleted && !task.IsFaulted;
+            onComplete?.Invoke(isSuccess);
+        });
     }
 }
