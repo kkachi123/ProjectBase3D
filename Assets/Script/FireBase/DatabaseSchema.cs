@@ -1,4 +1,4 @@
-public class FirebasePaths
+public class DatabaseSchema
 {
     // 유저 관련 경로
     public const string USERS = "users";
