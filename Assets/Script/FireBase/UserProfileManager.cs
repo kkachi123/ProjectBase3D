@@ -23,18 +23,17 @@ public class UserAccountEntity
 }
 #endregion
 
-public class UserDataManager
+public class UserProfileManager
 {
     public UserData userData { get; private set; }
 
     private string userId; 
     private DatabaseReference databaseReference;
-    public string DeviceId => SystemInfo.deviceUniqueIdentifier; // 현재 디바이스 ID 반환
-    public void Initialize(string userId, DatabaseReference dbReference)
+
+    public UserProfileManager(string userId, DatabaseReference dbReference)
     {
         this.userId = userId;
         databaseReference = dbReference;
-        LoadUserData();
     }
     #region Load User Data
     public void LoadUserData(Action<bool> onComplete = null)
@@ -113,42 +112,15 @@ public class UserDataManager
     #region Save User Data
     private void SaveUserData(Action<bool> onComplete = null)
     {
-        UserAccountEntity node = new UserAccountEntity { data = userData, deviceId = DeviceId };
-        string jsonData = JsonUtility.ToJson(node);
+        string jsonData = JsonUtility.ToJson(userData);
 
-        var userRef = databaseReference.Child(DatabaseSchema.USERS).Child(userId);
+        var userDataRef = databaseReference.Child(DatabaseSchema.USERS).Child(userId).Child(DatabaseSchema.DATA);
 
-        userRef.SetRawJsonValueAsync(jsonData)
+        userDataRef.SetRawJsonValueAsync(jsonData)
             .ContinueWithOnMainThread(task =>
             {
                 bool isSuccess = task.IsCompleted && !task.IsFaulted;
                 onComplete?.Invoke(isSuccess);
-            });
-    }
-    public void UpdateSeasonHighScore(int score, int seasonNumber, Action<bool> onComplete = null)
-    {
-        var leaderboardRef = databaseReference.Child(DatabaseSchema.LEADERBOARD).Child("season_" + seasonNumber).Child(userId);
-        leaderboardRef.Child(DatabaseSchema.SCORE)
-            .GetValueAsync()
-            .ContinueWithOnMainThread(task =>
-            {
-                if (task.IsFaulted) { onComplete?.Invoke(false); return; }
-
-                int currentScore = 0;
-                if (task.Result.Exists)
-                {
-                    currentScore = Convert.ToInt32(task.Result.Value);
-                }
-
-                if (score <= currentScore) { onComplete?.Invoke(true); return; }
-
-                var updates = new Dictionary<string, object> {
-                    { DatabaseSchema.NICKNAME, userData.nickName },
-                    { DatabaseSchema.SCORE, score }
-                };
-                leaderboardRef.UpdateChildrenAsync(updates).ContinueWithOnMainThread(task => {
-                    onComplete?.Invoke(task.IsCompleted);
-                });
             });
     }
 
@@ -218,4 +190,5 @@ public class UserDataManager
             });
     }
     #endregion
+
 }

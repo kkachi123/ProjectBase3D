@@ -9,127 +9,105 @@ public class FirebaseAuthManager : MonoBehaviour
     private FirebaseAuth auth;
     private DatabaseReference databaseReference;
 
-    private UserDataManager userDataManager;
-
+    private UserProfileManager userProfileManager;
+    private UserSessionManager userSessionManager;
+    private LeaderboardManager leaderboardManager;
 
     private void Awake()
     {
         auth = FirebaseAuth.DefaultInstance;
         databaseReference = FirebaseDatabase.DefaultInstance.RootReference;
-        userDataManager = new UserDataManager();
+        userSessionManager = new UserSessionManager(databaseReference);
     }
     private void Update()
     {
         if (Input.GetKeyDown(KeyCode.Alpha1))
         {
-            LoginUser(userDataManager.DeviceId + "@example.com", "password123"
+            LoginUser(userSessionManager.DeviceId + "@example.com", "password123"
                 , success => 
                 { 
                     if (!success) 
-                        CreateUser(userDataManager.DeviceId + "@example.com", "password123"
+                        CreateUser(userSessionManager.DeviceId + "@example.com", "password123"
                             , success => Debug.Log("User created and logged in: " + success));
                 });
         }
         if (Input.GetKeyDown(KeyCode.Alpha2))
         {
-            userDataManager.RegisterNickname("NewNickname2", success => Debug.Log("Nickname registered: " + success));
+            userProfileManager.RegisterNickname("NewNickname2", success => Debug.Log("Nickname registered: " + success));
         }
         if (Input.GetKeyDown(KeyCode.Alpha3))
         {
-            userDataManager.UpdateSeasonHighScore(30, 1, success => Debug.Log("Score recorded: " + success));
+            leaderboardManager.UpdateSeasonHighScore(30, "NewNickname2", success => Debug.Log("Score recorded: " + success));
         }
     }
     private void OnDestroy()
     {
         if (auth.CurrentUser != null)
         {
-            LogoutUser();
+            OnSessionTerminated();
         }
     }
     private void CreateUser(string email, string password ,Action<bool> onComplete = null)
     {
         auth
         .CreateUserWithEmailAndPasswordAsync(email, password)
-        .ContinueWithOnMainThread(task =>
-        {
-            if (task.IsFaulted || task.IsCanceled)
-            {
-                onComplete?.Invoke(false);
-                return;
-            }
-
-            FirebaseUser loggedInUser = task.Result.User;
-            HandleLoginSuccess(loggedInUser.UserId, success =>
-            {
-                if (!success) auth.SignOut();
-                onComplete?.Invoke(success);
-            });
-        });
+        .ContinueWithOnMainThread(task => HandleAuthCompletion(task, onComplete));
     }
     private void LoginUser(string email, string password ,Action<bool> onComplete = null)
     {
         auth
         .SignInWithEmailAndPasswordAsync(email, password)
-        .ContinueWithOnMainThread(task =>
+        .ContinueWithOnMainThread(task => HandleAuthCompletion(task, onComplete));
+    }
+    private void HandleAuthCompletion(System.Threading.Tasks.Task<AuthResult> task , Action<bool> onComplete = null)
+    {
+        if (task.IsFaulted || task.IsCanceled)
         {
-            if (task.IsFaulted || task.IsCanceled)
-            {
-                onComplete?.Invoke(false);
-                return;
-            }
-            
-            FirebaseUser loggedInUser = task.Result.User;
-            HandleLoginSuccess(loggedInUser.UserId, success =>
-            {
-                if (!success) auth.SignOut();
-                onComplete?.Invoke(success);
-            });
-        });
-    }
-    private void LogoutUser()
-    {
-        if(auth.CurrentUser == null) return; 
-        string uid = auth.CurrentUser.UserId;
-        // 로그아웃 시 DB의 deviceId를 지우는 작업은 '성공 여부와 상관없이' 결과적으로 로그아웃 시킵니다.
-        databaseReference
-            .Child(DatabaseSchema.USERS).Child(uid).Child(DatabaseSchema.DEVICE_ID)
-            .SetValueAsync(null)
-            .ContinueWithOnMainThread(task => auth.SignOut());
-    }
+            onComplete?.Invoke(false);
+            return;
+        }
 
-    #region Login Success Handling and Device Check
-    private void HandleLoginSuccess(string userId , Action<bool> onComplete = null)
-    {
-        ValidateDeviceSession(userId, success =>
+        string userId = task.Result.User.UserId;
+        userSessionManager.ValidateDeviceSession(userId, success =>
         {
-            if (success)
-            {
-                string userId = auth.CurrentUser.UserId;
-                userDataManager.Initialize(userId, databaseReference);
-            }
-            else onComplete?.Invoke(false);
-        });
-    }
-
-    private void ValidateDeviceSession(string userId , Action<bool> onComplete = null)
-    {
-        var deviceRef = databaseReference.Child(DatabaseSchema.USERS).Child(userId).Child(DatabaseSchema.DEVICE_ID);
-
-        deviceRef.GetValueAsync().ContinueWithOnMainThread(task => {
-            if (task.IsFaulted) { onComplete?.Invoke(false); return; }
-
-            string dbDeviceId = task.Result.Value as string;
-            string userDeviceId = userDataManager.DeviceId;
-            if (string.IsNullOrEmpty(dbDeviceId) || dbDeviceId == userDeviceId)
-            {
-                deviceRef.SetValueAsync(userDeviceId); 
-                onComplete?.Invoke(true);
-            }
+            if (!success) auth.SignOut();
             else
             {
-                onComplete?.Invoke(false);
+                leaderboardManager = new LeaderboardManager(userId, databaseReference);
+                userProfileManager = new UserProfileManager(userId, databaseReference);
+                userProfileManager.LoadUserData(success =>
+                {
+                    if (success)
+                    {
+                        userSessionManager.StartSession(() => userSessionManager.StartMonitoring(OnSessionTerminated));
+                    }
+                    else
+                    {
+                        OnSessionTerminated();
+                    }
+                    onComplete?.Invoke(success);
+                });
+            }
+            onComplete?.Invoke(success);
+        });
+    }
+
+    /*
+    // 예시: 랭킹 보기 버튼 눌렀을 때
+    public void ShowLeaderboard()
+    {
+        leaderboardManager.GetTopRankers(1, 10, (list) => {
+            foreach(var rank in list)
+            {
+                Debug.Log($"[{rank.nickName}] 점수: {rank.score}");
             }
         });
     }
-    #endregion
+     */
+
+    private void OnSessionTerminated()
+    {
+        if(auth.CurrentUser == null) return;
+        userSessionManager.ClearSession(() => auth.SignOut());
+    }
 }
