@@ -3,41 +3,42 @@ using Firebase.Database;
 using Firebase.Extensions;
 using System;
 using UnityEngine;
+using UniRx;
 
 public class FirebaseAuthManager : MonoBehaviour
 {
     private FirebaseAuth auth;
     private DatabaseReference databaseReference;
 
-    private UserProfileManager userProfileManager;
-    private UserSessionManager userSessionManager;
+    private UserProfileManager profileManager;
+    private UserSessionManager sessionManager;
     private LeaderboardManager leaderboardManager;
 
     private void Awake()
     {
         auth = FirebaseAuth.DefaultInstance;
         databaseReference = FirebaseDatabase.DefaultInstance.RootReference;
-        userSessionManager = new UserSessionManager(databaseReference);
+        sessionManager = new UserSessionManager(databaseReference);
     }
     private void Update()
     {
         if (Input.GetKeyDown(KeyCode.Alpha1))
         {
-            LoginUser(userSessionManager.DeviceId + "@example.com", "password123"
+            LoginUser(sessionManager.DeviceId + "@example.com", "password123"
                 , success => 
                 { 
                     if (!success) 
-                        CreateUser(userSessionManager.DeviceId + "@example.com", "password123"
+                        CreateUser(sessionManager.DeviceId + "@example.com", "password123"
                             , success => Debug.Log("User created and logged in: " + success));
                 });
         }
         if (Input.GetKeyDown(KeyCode.Alpha2))
         {
-            userProfileManager.RegisterNickname("NewNickname2", success => Debug.Log("Nickname registered: " + success));
+            profileManager.TryRegisterNickname("NewNickname2", success => Debug.Log("Nickname registered: " + success));
         }
         if (Input.GetKeyDown(KeyCode.Alpha3))
         {
-            leaderboardManager.UpdateSeasonHighScore(30, "NewNickname2", success => Debug.Log("Score recorded: " + success));
+            leaderboardManager.UpdateSeasonHighScore(30,success => Debug.Log("Score recorded: " + success));
         }
     }
     private void OnDestroy()
@@ -68,46 +69,56 @@ public class FirebaseAuthManager : MonoBehaviour
         }
 
         string userId = task.Result.User.UserId;
-        userSessionManager.ValidateDeviceSession(userId, success =>
+        sessionManager.ValidateDeviceSession(userId, success =>
         {
-            if (!success) auth.SignOut();
-            else
+            if (!success)
             {
-                leaderboardManager = new LeaderboardManager(userId, databaseReference);
-                userProfileManager = new UserProfileManager(userId, databaseReference);
-                userProfileManager.LoadUserData(success =>
-                {
-                    if (success)
-                    {
-                        userSessionManager.StartSession(() => userSessionManager.StartMonitoring(OnSessionTerminated));
-                    }
-                    else
-                    {
-                        OnSessionTerminated();
-                    }
-                    onComplete?.Invoke(success);
-                });
+                auth.SignOut();
+                onComplete?.Invoke(false);
+                return;
             }
-            onComplete?.Invoke(success);
+
+            leaderboardManager = new LeaderboardManager(userId, databaseReference);
+            profileManager = new UserProfileManager(userId, databaseReference);
+            
+
+            profileManager.LoadUserData(success =>
+            {
+                if (success)
+                {
+                    profileManager.OnNicknameChanged
+                    .Subscribe(newNickName =>
+                    {
+                        leaderboardManager.UpdateNicknameInLeaderboard(newNickName);
+                        // 다른 닉네임 동기화 작업이 필요한 곳에 활용
+                    })
+                    .AddTo(this); // 컴포넌트가 파괴될 때 구독 해제
+                    sessionManager.StartMonitoring(OnSessionTerminated);
+                    onComplete?.Invoke(true);
+                }
+                else
+                {
+                    OnSessionTerminated();
+                    onComplete?.Invoke(false);
+                }
+            });
         });
     }
+    private void OnSessionTerminated()
+    {
+        if(auth.CurrentUser == null) return;
+        sessionManager.ClearSession(() => auth.SignOut());
+    }
 
-    /*
-    // 예시: 랭킹 보기 버튼 눌렀을 때
+    //시즌1 상위 랭커 10명 조회 예시
     public void ShowLeaderboard()
     {
-        leaderboardManager.GetTopRankers(1, 10, (list) => {
-            foreach(var rank in list)
+        leaderboardManager.GetTopRankers(1, 10, (list) =>
+        {
+            foreach (var rank in list)
             {
                 Debug.Log($"[{rank.nickName}] 점수: {rank.score}");
             }
         });
-    }
-     */
-
-    private void OnSessionTerminated()
-    {
-        if(auth.CurrentUser == null) return;
-        userSessionManager.ClearSession(() => auth.SignOut());
     }
 }

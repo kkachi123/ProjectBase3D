@@ -20,7 +20,7 @@ public class RankEntry
 }
 public class LeaderboardManager
 {
-    private int seasonNumber = 1;
+    private int curSeasonNumber;
 
     private string userId;
     private DatabaseReference leaderboardRef;
@@ -28,45 +28,83 @@ public class LeaderboardManager
     public LeaderboardManager(string userId, DatabaseReference dbReference)
     {
         this.userId = userId;
-        leaderboardRef = dbReference.Child(DatabaseSchema.LEADERBOARD).Child("season_" + seasonNumber).Child(userId);
+        leaderboardRef = dbReference.Child(DatabaseSchema.LEADERBOARD);
+        curSeasonNumber = DatabaseSchema.CURRENT_SEASON;
     }
 
-    public void UpdateSeasonHighScore(int newScore , string nickName, Action<bool> onComplete = null)
+    public void UpdateSeasonHighScore(int newScore ,Action<bool> onComplete = null)
     {
-        leaderboardRef.Child(DatabaseSchema.SCORE)
+        var scorePath = leaderboardRef.Child(DatabaseSchema.SEASON_PREFIX + curSeasonNumber).Child(userId).Child(DatabaseSchema.SCORE);
+
+        /**/
+        scorePath
             .GetValueAsync()
             .ContinueWithOnMainThread(task =>
             {
-                if (task.IsFaulted) { onComplete?.Invoke(false); return; }
+                if (task.IsFaulted || task.IsCanceled) { onComplete?.Invoke(false); return; }
 
-                int currentScore = 0;
-                if (task.Result.Exists)
-                {
-                    currentScore = Convert.ToInt32(task.Result.Value);
-                }
+                int currentScore = task.Result.Exists ? Convert.ToInt32(task.Result.Value) : 0;
 
                 if (newScore <= currentScore) { onComplete?.Invoke(true); return; }
 
-                var updates = new Dictionary<string, object> {
-                    { DatabaseSchema.NICKNAME, nickName },
-                    { DatabaseSchema.SCORE, newScore }
-                };
-                leaderboardRef.UpdateChildrenAsync(updates).ContinueWithOnMainThread(task =>
-                {
-                    onComplete?.Invoke(task.IsCompleted);
-                });
+                scorePath
+                .SetValueAsync(newScore)
+                .ContinueWithOnMainThread(t => onComplete?.Invoke(t.IsCompleted));
             });
+
+        // Get -> 비교 -> Set 방식 (트랜잭션보다 간단하지만, 동시 업데이트 시 낮은 점수가 덮어씌워질 수 있음)
+        /*
+        scorePath.RunTransaction(mutableData =>
+        {
+            int currentScore = 0;
+            if (mutableData.Value != null) currentScore = Convert.ToInt32(mutableData.Value);
+            if (newScore <= currentScore) return TransactionResult.Abort();
+            mutableData.Value = newScore;
+            return TransactionResult.Success(mutableData);
+        })
+        .ContinueWithOnMainThread(task =>
+        {
+            if (task.IsFaulted || task.IsCanceled) { onComplete?.Invoke(false); return; }
+
+            // task.Result.Committed가 true면 성공, false면 Abort(점수가 낮아서 안 바뀜)
+            onComplete?.Invoke(task.IsCompleted);
+        });
+        */
     }
 
-    /// 상위 10명의 랭킹 데이터를 가져옵니다.
-    /*
+    public void UpdateNicknameInLeaderboard(string newNickname)
+    {
+        var nickNamePath = leaderboardRef.Child(DatabaseSchema.SEASON_PREFIX + curSeasonNumber).Child(userId).Child(DatabaseSchema.NICKNAME);
+
+        // 시즌 번호는 DatabaseSchema.CURRENT_SEASON 등을 활용
+        nickNamePath
+            .SetValueAsync(newNickname)
+            .ContinueWithOnMainThread(task =>
+            {
+                if (task.IsCompleted) Debug.Log($"[Leaderboard] 닉네임 동기화 완료: {newNickname}");
+            });
+
+        /*
+        nickNamePath.RunTransaction(mutableData =>
+        {
+            mutableData.Value = newNickname;
+            return TransactionResult.Success(mutableData);
+        })
+        .ContinueWithOnMainThread(task =>
+        {
+            if (task.IsCompleted) Debug.Log($"[Leaderboard] 닉네임 동기화 완료: {newNickname}");
+        });
+        */
+    }
+
+    // 시즌 seasonNumber 상위 limit명의 랭킹 데이터를 가져옵니다.
     public void GetTopRankers(int seasonNumber, int limit, Action<List<RankEntry>> onComplete)
     {
         // 1. 점수(score) 기준으로 정렬하고, 마지막(가장 높은 쪽)부터 limit개만큼 가져옴
-        Query topRankersQuery = databaseReference.Child(DatabaseSchema.LEADERBOARD)
-                                                 .Child("season_" + seasonNumber)
-                                                 .OrderByChild(DatabaseSchema.SCORE)
-                                                 .LimitToLast(limit);
+        Query topRankersQuery = 
+            leaderboardRef
+            .Child(DatabaseSchema.SEASON_PREFIX + seasonNumber)
+            .OrderByChild(DatabaseSchema.SCORE).LimitToLast(limit);
 
         topRankersQuery.GetValueAsync().ContinueWithOnMainThread(task =>
         {
@@ -93,5 +131,5 @@ public class LeaderboardManager
             onComplete?.Invoke(rankList);
         });
     }
-    */
+
 }
