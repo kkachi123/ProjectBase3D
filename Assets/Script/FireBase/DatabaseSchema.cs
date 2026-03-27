@@ -10,6 +10,6 @@ public class DatabaseSchema
     public const string LEADERBOARD = "leaderboard";
     public const int CURRENT_SEASON = 1;
     public const string SEASON_PREFIX = "season_";
-    public const string SCORE = "score";
-    public const string NICKNAME = "nickName";
+    public const string LEADERBOARD_SCORE = "score";
+    public const string LEADERBOARD_NICKNAME = "nickName";
 }

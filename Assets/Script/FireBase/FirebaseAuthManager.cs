@@ -38,7 +38,7 @@ public class FirebaseAuthManager : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.Alpha3))
         {
-            leaderboardManager.UpdateSeasonHighScore(30,success => Debug.Log("Score recorded: " + success));
+            profileManager.TryUpdateHighScore(50,success => Debug.Log("Score recorded: " + success));
         }
     }
     private void OnDestroy()
@@ -87,10 +87,9 @@ public class FirebaseAuthManager : MonoBehaviour
                 if (success)
                 {
                     profileManager.OnNicknameChanged
-                    .Subscribe(newNickName =>
+                    .Subscribe(newData =>
                     {
-                        leaderboardManager.UpdateNicknameInLeaderboard(newNickName);
-                        // 다른 닉네임 동기화 작업이 필요한 곳에 활용
+                        leaderboardManager.UpdateSeasonHighScore(newData);
                     })
                     .AddTo(this); // 컴포넌트가 파괴될 때 구독 해제
                     sessionManager.StartMonitoring(OnSessionTerminated);

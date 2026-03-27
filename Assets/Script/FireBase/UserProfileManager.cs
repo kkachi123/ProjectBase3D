@@ -10,17 +10,24 @@ using UniRx;
 public class UserData
 {
     public string nickName;
+    public int highScore; 
 
     public UserData(string nickName)
     {
         this.nickName = nickName;
+        highScore = 0;
     }
 }
 #region wrapper Class
-public class UserAccountEntity
+public class LeaderboardEntry
 {
-    public UserData data;
-    public string deviceId; // 중복 로그인 방지
+    public string nickName;
+    public int score;
+    public LeaderboardEntry(string nickName, int score)
+    {
+        this.nickName = nickName;
+        this.score = score;
+    }
 }
 #endregion
 
@@ -31,8 +38,8 @@ public class UserProfileManager
     private string userId; 
     private DatabaseReference rootRef;
 
-    private Subject<string> onNicknameChanged = new Subject<string>();
-    public IObservable<string> OnNicknameChanged => onNicknameChanged;
+    private Subject<LeaderboardEntry> onUpdateHighScore = new Subject<LeaderboardEntry>();
+    public IObservable<LeaderboardEntry> OnNicknameChanged => onUpdateHighScore;
 
     public UserProfileManager(string userId, DatabaseReference dbReference)
     {
@@ -151,9 +158,31 @@ public class UserProfileManager
                 if (!string.IsNullOrEmpty(oldNickName))
                     rootRef.Child(DatabaseSchema.NICKNAMES).Child(oldNickName).RemoveValueAsync();
 
+                // Leaderboard 업데이트 (닉네임 변경이 반영되도록)
+                LeaderboardEntry entry = new LeaderboardEntry(userData.nickName, userData.highScore);
+                onUpdateHighScore.OnNext(entry);
+
                 onComplete?.Invoke(true);
-                onNicknameChanged.OnNext(newNickName); // 닉네임 변경 알림
             });
+        });
+    }
+
+    public void TryUpdateHighScore(int newScore, Action<bool> onComplete = null)
+    {
+        if (newScore <= userData.highScore)
+        {
+            onComplete?.Invoke(true); // 점수가 낮거나 같으면 업데이트 필요 없음
+            return;
+        }
+        userData.highScore = newScore;
+        SaveUserData(onComplete : success =>
+        {
+            if (success)
+            {
+                LeaderboardEntry entry = new LeaderboardEntry(userData.nickName, userData.highScore);
+                onUpdateHighScore.OnNext(entry);
+            }
+            onComplete?.Invoke(success);
         });
     }
     #endregion
