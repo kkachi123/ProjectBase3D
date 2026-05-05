@@ -19,11 +19,11 @@ public class UserData
     }
 }
 #region wrapper Class
-public class LeaderboardEntry
+public class LeaderboardUserEntry
 {
     public string nickName;
     public int score;
-    public LeaderboardEntry(string nickName, int score)
+    public LeaderboardUserEntry(string nickName, int score)
     {
         this.nickName = nickName;
         this.score = score;
@@ -38,8 +38,8 @@ public class UserProfileManager
     private string userId; 
     private DatabaseReference rootRef;
 
-    private Subject<LeaderboardEntry> onUpdateHighScore = new Subject<LeaderboardEntry>();
-    public IObservable<LeaderboardEntry> OnNicknameChanged => onUpdateHighScore;
+    private Subject<LeaderboardUserEntry> onUpdateHighScore = new Subject<LeaderboardUserEntry>();
+    public IObservable<LeaderboardUserEntry> OnNicknameChanged => onUpdateHighScore;
 
     public UserProfileManager(string userId, DatabaseReference dbReference)
     {
@@ -159,8 +159,8 @@ public class UserProfileManager
                     rootRef.Child(DatabaseSchema.NICKNAMES).Child(oldNickName).RemoveValueAsync();
 
                 // Leaderboard 업데이트 (닉네임 변경이 반영되도록)
-                LeaderboardEntry entry = new LeaderboardEntry(userData.nickName, userData.highScore);
-                onUpdateHighScore.OnNext(entry);
+                LeaderboardUserEntry entry = new LeaderboardUserEntry(userData.nickName, userData.highScore);
+                onUpdateHighScore?.OnNext(entry);
 
                 onComplete?.Invoke(true);
             });
@@ -179,8 +179,8 @@ public class UserProfileManager
         {
             if (success)
             {
-                LeaderboardEntry entry = new LeaderboardEntry(userData.nickName, userData.highScore);
-                onUpdateHighScore.OnNext(entry);
+                LeaderboardUserEntry entry = new LeaderboardUserEntry(userData.nickName, userData.highScore);
+                onUpdateHighScore?.OnNext(entry);
             }
             onComplete?.Invoke(success);
         });

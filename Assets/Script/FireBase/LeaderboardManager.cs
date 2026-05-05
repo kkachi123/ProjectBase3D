@@ -32,7 +32,7 @@ public class LeaderboardManager
         curSeasonNumber = DatabaseSchema.CURRENT_SEASON;
     }
 
-    public void UpdateSeasonHighScore(LeaderboardEntry newData, Action<bool> onComplete = null)
+    public void UpdateSeasonHighScore(LeaderboardUserEntry newData, Action<bool> onComplete = null)
     {
         string jsonData = JsonUtility.ToJson(newData);
 
