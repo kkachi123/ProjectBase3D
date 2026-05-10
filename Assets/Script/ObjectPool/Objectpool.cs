@@ -32,10 +32,10 @@ public class Objectpool<T> : IObjectPool<T> where T : MonoBehaviour, IPooledObje
 
         SetupPool();
     }
-    
+
     private void SetupPool()
     {
-        if(parent == null || prefab == null)
+        if (parent == null || prefab == null)
         {
             Debug.LogError("Parent or Prefab is null. Cannot setup pool.");
             return;
@@ -59,8 +59,9 @@ public class Objectpool<T> : IObjectPool<T> where T : MonoBehaviour, IPooledObje
 
     public T GetPooledObject()
     {
-        if (queue.Count == 0) return CreatePooledObject();
-        T nextObject = queue.Dequeue();
+        T nextObject;
+        if (queue.Count == 0) nextObject = CreatePooledObject();
+        else nextObject = queue.Dequeue();
         nextObject.gameObject.SetActive(true);
         return nextObject;
     }
